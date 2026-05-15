@@ -9,6 +9,7 @@ The game presents a pixel-style runner/gunner experience with keyboard controls,
 - `index.html`: Main HTML entry point. Defines the canvas, HUD, overlay panel, and loads `style.css` and `game.js`.
 - `style.css`: Page layout and visual styling for the canvas shell, HUD, boss health bar, and overlay menu.
 - `game.js`: Main game implementation. Contains configuration, input handling, audio, level data, entity creation, update loop, collision logic, drawing code, and HUD updates.
+- `cloudflare-worker.js`: Optional Cloudflare Worker backend for the online leaderboard. Requires a KV binding named `SCORES`.
 - `.gitignore`: Git ignore rules for local/system/generated files.
 - `AGENTS.md`: Project instructions for Codex and future engineering work.
 
@@ -56,7 +57,15 @@ For quick syntax validation of JavaScript when Node.js is available:
 
 ```powershell
 node --check game.js
+node --check cloudflare-worker.js
 ```
+
+Online leaderboard deployment notes:
+
+1. Deploy `cloudflare-worker.js` as a Cloudflare Worker.
+2. Create a Cloudflare KV namespace and bind it to the Worker as `SCORES`.
+3. Put the Worker URL into `CONFIG.leaderboard.apiUrl` in `game.js`.
+4. If the Worker is not configured or is unavailable, the game falls back to the local browser leaderboard.
 
 # Coding Rules
 

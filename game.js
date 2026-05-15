@@ -16,6 +16,7 @@
     overlayTitle: document.getElementById("overlay-title"),
     overlayBody: document.getElementById("overlay-body"),
     overlaySub: document.getElementById("overlay-sub"),
+    playerId: document.getElementById("player-id"),
     leaderboard: document.getElementById("leaderboard")
   };
 
@@ -41,7 +42,12 @@
       bossDamage: 2, bossArena: { x: 3300, right: 4300 }
     },
     camera: { lead: 0.38, lerp: 8 },
-    leaderboard: { key: "pixel-runner-gunner-scores", maxEntries: 5 }
+    leaderboard: {
+      apiUrl: "",
+      key: "pixel-runner-gunner-scores",
+      playerKey: "pixel-runner-gunner-player-id",
+      maxEntries: 5
+    }
   };
 
   const KEY = {
@@ -57,12 +63,14 @@
       this.pressed = new Set();
       this.released = new Set();
       window.addEventListener("keydown", (event) => {
+        if (event.target === hud.playerId) return;
         if (this.shouldCapture(event.code)) event.preventDefault();
         if (!this.down.has(event.code)) this.pressed.add(event.code);
         this.down.add(event.code);
         ensureAudio();
       });
       window.addEventListener("keyup", (event) => {
+        if (event.target === hud.playerId) return;
         if (this.shouldCapture(event.code)) event.preventDefault();
         this.down.delete(event.code);
         this.released.add(event.code);
@@ -151,7 +159,7 @@
     playerBullets: [], enemyBullets: [], particles: [], texts: [], items: [],
     boss: null, bossActive: false, bossDefeated: false, warningTimer: 0,
     safePoint: { x: 80, y: 360 }, fps: 0, fpsTimer: 0, fpsFrames: 0,
-    scoreSaved: false
+    scoreSaved: false, playerId: "PLAYER1", leaderboardMode: "local"
   };
 
   function makePlayer() {
@@ -185,7 +193,7 @@
     game.boss = makeBoss(); game.bossActive = false; game.bossDefeated = false; game.warningTimer = 0;
     game.safePoint = { ...level.checkpoints[0] }; game.scoreSaved = false; setOverlay("menu");
   }
-  function startGame() { resetGame(); game.state = "playing"; hideOverlay(); }
+  function startGame() { game.playerId = readPlayerId(); game.state = "playing"; hideOverlay(); }
   function setOverlay(state) {
     if ((state === "gameOver" || state === "victory") && !game.scoreSaved) saveLeaderboardEntry(state);
     const lines = {
@@ -196,9 +204,40 @@
     }[state];
     hud.overlayTitle.textContent = lines[0]; hud.overlayBody.textContent = lines[1]; hud.overlaySub.textContent = lines[2]; hud.overlay.classList.remove("hidden");
     renderLeaderboard();
+    refreshOnlineLeaderboard();
   }
   function hideOverlay() { hud.overlay.classList.add("hidden"); }
   function formatTime(seconds) { return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, "0")}`; }
+  function cleanPlayerId(value) {
+    return (value || "PLAYER1").toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 16) || "PLAYER1";
+  }
+  function readPlayerId() {
+    const playerId = cleanPlayerId(hud.playerId.value);
+    hud.playerId.value = playerId;
+    try {
+      localStorage.setItem(CONFIG.leaderboard.playerKey, playerId);
+    } catch {
+      return playerId;
+    }
+    return playerId;
+  }
+  function loadPlayerId() {
+    try {
+      return cleanPlayerId(localStorage.getItem(CONFIG.leaderboard.playerKey));
+    } catch {
+      return "PLAYER1";
+    }
+  }
+  function initPlayerId() {
+    game.playerId = loadPlayerId();
+    hud.playerId.value = game.playerId;
+    hud.playerId.addEventListener("input", () => {
+      const cursor = hud.playerId.selectionStart;
+      hud.playerId.value = cleanPlayerId(hud.playerId.value);
+      hud.playerId.setSelectionRange(cursor, cursor);
+    });
+    hud.playerId.addEventListener("change", readPlayerId);
+  }
   function loadLeaderboard() {
     try {
       const entries = JSON.parse(localStorage.getItem(CONFIG.leaderboard.key) || "[]");
@@ -209,26 +248,29 @@
   }
   function saveLeaderboardEntry(result) {
     game.scoreSaved = true;
-    const entries = loadLeaderboard();
-    entries.push({
+    game.playerId = readPlayerId();
+    const entry = {
+      playerId: game.playerId,
       score: game.score,
       time: Math.round(game.levelTime),
       defeated: game.defeated,
       result,
       date: new Date().toLocaleDateString()
-    });
+    };
+    const entries = loadLeaderboard();
+    entries.push(entry);
     entries.sort((a, b) => b.score - a.score || a.time - b.time);
     try {
       localStorage.setItem(CONFIG.leaderboard.key, JSON.stringify(entries.slice(0, CONFIG.leaderboard.maxEntries)));
     } catch {
       return;
     }
+    submitOnlineScore(entry);
   }
-  function renderLeaderboard() {
-    const entries = loadLeaderboard();
+  function renderLeaderboard(entries = loadLeaderboard(), mode = game.leaderboardMode) {
     const title = document.createElement("div");
     title.className = "leaderboard-title";
-    title.textContent = "LEADERBOARD";
+    title.textContent = `${mode === "online" ? "ONLINE" : "LOCAL"} LEADERBOARD`;
     if (!entries.length) {
       const empty = document.createElement("p");
       empty.className = "leaderboard-empty";
@@ -241,10 +283,40 @@
     for (const entry of entries) {
       const result = entry.result === "victory" ? "CLEAR" : "FAILED";
       const row = document.createElement("li");
-      row.textContent = `${entry.score} pts - ${result} - ${formatTime(entry.time || 0)} - ${entry.defeated || 0} KOs`;
+      row.textContent = `${entry.playerId || "PLAYER"} - ${entry.score} pts - ${result} - ${formatTime(entry.time || 0)} - ${entry.defeated || 0} KOs`;
       list.append(row);
     }
-    hud.leaderboard.replaceChildren(title, list);
+    const status = document.createElement("div");
+    status.className = "leaderboard-status";
+    status.textContent = CONFIG.leaderboard.apiUrl ? "Scores sync when the online service is available." : "Set CONFIG.leaderboard.apiUrl to enable online scores.";
+    hud.leaderboard.replaceChildren(title, list, status);
+  }
+  async function refreshOnlineLeaderboard() {
+    if (!CONFIG.leaderboard.apiUrl) return;
+    try {
+      const response = await fetch(`${CONFIG.leaderboard.apiUrl.replace(/\/$/, "")}/scores?limit=${CONFIG.leaderboard.maxEntries}`);
+      if (!response.ok) throw new Error("Leaderboard request failed");
+      const data = await response.json();
+      const entries = Array.isArray(data.scores) ? data.scores : [];
+      game.leaderboardMode = "online";
+      renderLeaderboard(entries, "online");
+    } catch {
+      game.leaderboardMode = "local";
+      renderLeaderboard(loadLeaderboard(), "local");
+    }
+  }
+  async function submitOnlineScore(entry) {
+    if (!CONFIG.leaderboard.apiUrl) return;
+    try {
+      await fetch(`${CONFIG.leaderboard.apiUrl.replace(/\/$/, "")}/scores`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(entry)
+      });
+      refreshOnlineLeaderboard();
+    } catch {
+      game.leaderboardMode = "local";
+    }
   }
   function aabb(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
   function rectFor(e) { return { x: e.x, y: e.y, w: e.w, h: e.h }; }
@@ -687,6 +759,7 @@
     const dt = Math.min(0.033, (now - last) / 1000 || 0);
     last = now; updateFps(dt); updateState(dt); draw(); updateHud(); input.endFrame(); requestAnimationFrame(loop);
   }
+  initPlayerId();
   resetGame();
   requestAnimationFrame(loop);
 })();
