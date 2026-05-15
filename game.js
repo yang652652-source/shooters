@@ -15,7 +15,8 @@
     overlay: document.getElementById("overlay"),
     overlayTitle: document.getElementById("overlay-title"),
     overlayBody: document.getElementById("overlay-body"),
-    overlaySub: document.getElementById("overlay-sub")
+    overlaySub: document.getElementById("overlay-sub"),
+    leaderboard: document.getElementById("leaderboard")
   };
 
   const CONFIG = {
@@ -29,7 +30,7 @@
       x: 80, y: 380, width: 30, standHeight: 46, crouchHeight: 28, maxHp: 5,
       acceleration: 1750, maxSpeed: 225, crouchSpeed: 95, friction: 1500,
       gravity: 1500, jumpVelocity: -540, maxFallSpeed: 760,
-      coyoteTime: 0.1, jumpBuffer: 0.1, shootInterval: 0.18, rapidInterval: 0.09,
+      coyoteTime: 0.1, jumpBuffer: 0.1, airJumps: 1, shootInterval: 0.18, rapidInterval: 0.09,
       spreadDuration: 8, rapidDuration: 8, bulletSpeed: 690,
       dashSpeed: 540, dashDuration: 0.25, dashCooldown: 1.5, damageInvuln: 1
     },
@@ -39,7 +40,8 @@
       flyerShootRange: 600, enemyBulletSpeed: 185, bossHp: 30,
       bossDamage: 2, bossArena: { x: 3300, right: 4300 }
     },
-    camera: { lead: 0.38, lerp: 8 }
+    camera: { lead: 0.38, lerp: 8 },
+    leaderboard: { key: "pixel-runner-gunner-scores", maxEntries: 5 }
   };
 
   const KEY = {
@@ -148,7 +150,8 @@
     camera: { x: 0, y: 0, shake: 0 }, player: null, enemies: [],
     playerBullets: [], enemyBullets: [], particles: [], texts: [], items: [],
     boss: null, bossActive: false, bossDefeated: false, warningTimer: 0,
-    safePoint: { x: 80, y: 360 }, fps: 0, fpsTimer: 0, fpsFrames: 0
+    safePoint: { x: 80, y: 360 }, fps: 0, fpsTimer: 0, fpsFrames: 0,
+    scoreSaved: false
   };
 
   function makePlayer() {
@@ -157,6 +160,7 @@
       standH: CONFIG.player.standHeight, crouchH: CONFIG.player.crouchHeight,
       vx: 0, vy: 0, hp: CONFIG.player.maxHp, maxHp: CONFIG.player.maxHp, facing: 1,
       grounded: false, crouching: false, coyote: 0, jumpBuffer: 0, shootCooldown: 0,
+      airJumpsRemaining: CONFIG.player.airJumps,
       dashTimer: 0, dashCooldown: 0, damageInvuln: 0, weaponType: "normal",
       weaponTimer: 0, hitFlash: 0, muzzleFlash: 0, walkClock: 0
     };
@@ -179,10 +183,11 @@
     game.enemies = level.enemySpawns.map(makeEnemy); game.playerBullets = []; game.enemyBullets = [];
     game.particles = []; game.texts = []; game.items = level.itemSpawns.map((item) => ({ ...item, w: 24, h: 24, collected: false, bob: Math.random() * 10 }));
     game.boss = makeBoss(); game.bossActive = false; game.bossDefeated = false; game.warningTimer = 0;
-    game.safePoint = { ...level.checkpoints[0] }; setOverlay("menu");
+    game.safePoint = { ...level.checkpoints[0] }; game.scoreSaved = false; setOverlay("menu");
   }
   function startGame() { resetGame(); game.state = "playing"; hideOverlay(); }
   function setOverlay(state) {
+    if ((state === "gameOver" || state === "victory") && !game.scoreSaved) saveLeaderboardEntry(state);
     const lines = {
       menu: ["PIXEL RUNNER GUNNER", "A compact arcade mission in one canvas.", "ENTER / J"],
       paused: ["PAUSED", "The fight is frozen in place.", "P"],
@@ -190,9 +195,57 @@
       victory: ["STAGE CLEAR", `Score ${game.score} - Time ${formatTime(game.levelTime)} - KOs ${game.defeated}`, "R"]
     }[state];
     hud.overlayTitle.textContent = lines[0]; hud.overlayBody.textContent = lines[1]; hud.overlaySub.textContent = lines[2]; hud.overlay.classList.remove("hidden");
+    renderLeaderboard();
   }
   function hideOverlay() { hud.overlay.classList.add("hidden"); }
   function formatTime(seconds) { return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, "0")}`; }
+  function loadLeaderboard() {
+    try {
+      const entries = JSON.parse(localStorage.getItem(CONFIG.leaderboard.key) || "[]");
+      return Array.isArray(entries) ? entries.filter((entry) => Number.isFinite(entry.score)) : [];
+    } catch {
+      return [];
+    }
+  }
+  function saveLeaderboardEntry(result) {
+    game.scoreSaved = true;
+    const entries = loadLeaderboard();
+    entries.push({
+      score: game.score,
+      time: Math.round(game.levelTime),
+      defeated: game.defeated,
+      result,
+      date: new Date().toLocaleDateString()
+    });
+    entries.sort((a, b) => b.score - a.score || a.time - b.time);
+    try {
+      localStorage.setItem(CONFIG.leaderboard.key, JSON.stringify(entries.slice(0, CONFIG.leaderboard.maxEntries)));
+    } catch {
+      return;
+    }
+  }
+  function renderLeaderboard() {
+    const entries = loadLeaderboard();
+    const title = document.createElement("div");
+    title.className = "leaderboard-title";
+    title.textContent = "LEADERBOARD";
+    if (!entries.length) {
+      const empty = document.createElement("p");
+      empty.className = "leaderboard-empty";
+      empty.textContent = "No scores yet.";
+      hud.leaderboard.replaceChildren(title, empty);
+      return;
+    }
+    const list = document.createElement("ol");
+    list.className = "leaderboard-list";
+    for (const entry of entries) {
+      const result = entry.result === "victory" ? "CLEAR" : "FAILED";
+      const row = document.createElement("li");
+      row.textContent = `${entry.score} pts - ${result} - ${formatTime(entry.time || 0)} - ${entry.defeated || 0} KOs`;
+      list.append(row);
+    }
+    hud.leaderboard.replaceChildren(title, list);
+  }
   function aabb(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
   function rectFor(e) { return { x: e.x, y: e.y, w: e.w, h: e.h }; }
   function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
@@ -249,10 +302,17 @@
       if (move !== 0) { p.vx += move * CONFIG.player.acceleration * dt; p.vx = clamp(p.vx, -maxSpeed, maxSpeed); }
       else { const friction = CONFIG.player.friction * dt; if (Math.abs(p.vx) <= friction) p.vx = 0; else p.vx -= Math.sign(p.vx) * friction; }
     }
-    if (p.grounded) p.coyote = CONFIG.player.coyoteTime; else p.coyote = Math.max(0, p.coyote - dt);
-    if (p.jumpBuffer > 0 && p.coyote > 0 && !p.crouching) {
-      p.vy = CONFIG.player.jumpVelocity; p.grounded = false; p.coyote = 0; p.jumpBuffer = 0;
-      addParticles(p.x + p.w / 2, p.y + p.h, "#e0f2fe", 8, 80); tone("jump");
+    if (p.grounded) { p.coyote = CONFIG.player.coyoteTime; p.airJumpsRemaining = CONFIG.player.airJumps; }
+    else p.coyote = Math.max(0, p.coyote - dt);
+    if (p.jumpBuffer > 0 && !p.crouching) {
+      const canGroundJump = p.coyote > 0;
+      const canAirJump = !canGroundJump && p.airJumpsRemaining > 0;
+      if (canGroundJump || canAirJump) {
+        p.vy = canAirJump ? CONFIG.player.jumpVelocity * 0.92 : CONFIG.player.jumpVelocity;
+        p.grounded = false; p.coyote = 0; p.jumpBuffer = 0;
+        if (canAirJump) p.airJumpsRemaining -= 1;
+        addParticles(p.x + p.w / 2, p.y + p.h, canAirJump ? "#93c5fd" : "#e0f2fe", canAirJump ? 12 : 8, 90); tone("jump");
+      }
     }
     if (input.wasReleased("up") && p.vy < -160) p.vy = -160;
     p.vy += CONFIG.player.gravity * (p.dashTimer <= 0 ? 1 : 0.18) * dt;
@@ -275,7 +335,7 @@
     if (p.damageInvuln > 0) return;
     damagePlayer(1);
     if (game.state !== "playing") return;
-    p.x = game.safePoint.x; p.y = game.safePoint.y; p.vx = 0; p.vy = 0; p.h = p.standH; p.crouching = false;
+    p.x = game.safePoint.x; p.y = game.safePoint.y; p.vx = 0; p.vy = 0; p.h = p.standH; p.crouching = false; p.airJumpsRemaining = CONFIG.player.airJumps;
   }
   function shootPlayer() {
     const p = game.player;

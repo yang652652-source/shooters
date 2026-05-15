@@ -146,6 +146,35 @@ p {
   color: #fde68a;
 }
 
+#leaderboard {
+  margin-top: 22px;
+  text-align: left;
+}
+
+.leaderboard-title {
+  margin-bottom: 8px;
+  color: var(--accent);
+  font-size: clamp(13px, 1.8vw, 16px);
+}
+
+.leaderboard-list {
+  margin: 0;
+  padding-left: 26px;
+  color: #dbeafe;
+  font-size: clamp(12px, 1.6vw, 15px);
+  line-height: 1.55;
+}
+
+.leaderboard-list li::marker {
+  color: #fde68a;
+}
+
+.leaderboard-empty {
+  margin: 0;
+  color: #94a3b8;
+  font-size: clamp(12px, 1.6vw, 15px);
+}
+
 @media (max-width: 760px) {
   body {
     align-items: start;
