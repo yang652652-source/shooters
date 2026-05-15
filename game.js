@@ -43,7 +43,7 @@
     },
     camera: { lead: 0.38, lerp: 8 },
     leaderboard: {
-      apiUrl: "",
+      apiUrl: "https://shooters-leaderboard.yang652652.workers.dev",
       key: "pixel-runner-gunner-scores",
       playerKey: "pixel-runner-gunner-player-id",
       maxEntries: 5
