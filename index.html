@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pixel Runner Gunner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="game-shell" aria-label="2D side scrolling shooter demo">
+    <canvas id="game" width="960" height="540"></canvas>
+
+    <section id="hud" aria-live="polite">
+      <div class="hud-left">
+        <span id="health">HP [-----]</span>
+        <span id="lives-note"></span>
+      </div>
+      <div class="hud-right">
+        <span id="weapon">WEAPON: NORMAL</span>
+        <span id="score">SCORE: 0</span>
+      </div>
+      <div id="boss-wrap" class="hidden">
+        <span>BOSS</span>
+        <div id="boss-track"><div id="boss-fill"></div></div>
+      </div>
+      <div id="debug"></div>
+    </section>
+
+    <section id="overlay" class="overlay">
+      <div class="panel">
+        <h1 id="overlay-title">PIXEL RUNNER GUNNER</h1>
+        <p id="overlay-body">
+          A / D move, W or Space jump, S crouch, J shoot, K dash, P pause.
+        </p>
+        <p id="overlay-sub">Press Enter or J to start</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="game.js"></script>
+</body>
+</html>
