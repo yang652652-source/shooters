@@ -44,7 +44,7 @@
     enemies: {
       activateDistance: 940, patrolHp: 2, turretHp: 3, flyerHp: 2,
       patrolSpeed: 62, patrolShootRange: 430, turretShootRange: 680,
-      flyerShootRange: 600, enemyBulletSpeed: 185, bossHp: 30,
+      flyerShootRange: 600, enemyBulletSpeed: 155, bossHp: 30,
       bossDamage: 2, bossArena: { x: 3300, right: 4300 }
     },
     camera: { lead: 0.38, lerp: 8 },
@@ -423,6 +423,12 @@
     if (index < STAGES.length) return STAGES[index];
     return generateProceduralStage(index);
   }
+  function currentBossArena() {
+    const width = 1000;
+    const right = level.length;
+    const x = Math.max(900, right - width);
+    return { x, right };
+  }
   function affixesForStage(stageNumber) {
     if (stageNumber <= STAGES.length) return [];
     const unlockedCount = Math.min(BOSS_AFFIXES.length, Math.floor((stageNumber - STAGES.length) / 3) + 1);
@@ -454,9 +460,10 @@
 
   function makeBoss() {
     const data = level.boss;
+    const arena = currentBossArena();
     const boss = {
       type: "boss", bossName: level.bossName, pattern: data.pattern,
-      x: 3890, y: CONFIG.groundY - 104, w: 78, h: 104,
+      x: arena.x + 560, y: CONFIG.groundY - 104, w: 78, h: 104,
       vx: -data.speed, vy: 0, facing: -1, hp: data.hp, maxHp: data.hp,
       shootCooldown: 1.1, summonCooldown: 4, waveCooldown: 2.5,
       summons: 0, hitFlash: 0, dead: false, active: true, damage: data.damage
@@ -553,7 +560,6 @@
     hud.overlaySub.replaceChildren(...groups.map(makeKeyGroup));
   }
   function stageCardText() {
-    if (game.stageIndex + 1 <= STAGES.length) return `STAGE ${game.stageIndex + 1}/${STAGES.length} - ${level.label}`;
     return `STAGE ${game.stageIndex + 1}/∞ - ${level.label}`;
   }
   function makeKeyGroup(group) {
@@ -879,7 +885,10 @@
     p.vy += CONFIG.player.gravity * (p.dashTimer <= 0 ? 1 : 0.18) * dt;
     p.vy = Math.min(p.vy, CONFIG.player.maxFallSpeed);
     moveWithPlatforms(p, dt); p.x = clamp(p.x, 0, level.length - p.w);
-    if (game.bossActive && !game.bossDefeated) p.x = clamp(p.x, CONFIG.enemies.bossArena.x + 24, CONFIG.enemies.bossArena.right - p.w - 36);
+    if (game.bossActive && !game.bossDefeated) {
+      const arena = currentBossArena();
+      p.x = clamp(p.x, arena.x + 24, arena.right - p.w - 36);
+    }
     updateSafePoint();
     if (level.hazards.some((hazard) => aabb(p, hazard)) || p.y > CONFIG.killY) hazardRespawn();
     if (input.isDown("shoot")) shootPlayer();
@@ -948,16 +957,16 @@
       const offset = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
       const angle = base + offset;
       const speed = enemy.type === "boss"
-        ? 215 + game.stageIndex * 35 + (enemy.affixBulletSpeedBonus || 0)
+        ? 185 + game.stageIndex * 28 + (enemy.affixBulletSpeedBonus || 0)
         : CONFIG.enemies.enemyBulletSpeed;
-      game.enemyBullets.push({ x: fromX - 5, y: fromY - 5, w: 11, h: 11, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, damage: enemy.type === "boss" ? enemy.damage : 1, life: 5, color: enemy.type === "boss" ? "#c084fc" : "#fb7185" });
+      game.enemyBullets.push({ x: fromX - 3, y: fromY - 3, w: 7, h: 7, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, damage: enemy.type === "boss" ? enemy.damage : 1, life: 5, color: enemy.type === "boss" ? "#c084fc" : "#fb7185" });
     }
   }
-  function bossRadialShot(boss, count, speed = 190) {
+  function bossRadialShot(boss, count, speed = 165) {
     const fromX = boss.x + boss.w / 2, fromY = boss.y + boss.h * 0.45;
     for (let i = 0; i < count; i += 1) {
       const angle = (Math.PI * 2 * i) / count + game.time * 0.25;
-      game.enemyBullets.push({ x: fromX, y: fromY, w: 10, h: 10, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, damage: boss.damage, life: 4.5, color: "#f0abfc" });
+      game.enemyBullets.push({ x: fromX, y: fromY, w: 6, h: 6, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, damage: boss.damage, life: 4.5, color: "#f0abfc" });
     }
   }
 
@@ -1002,6 +1011,7 @@
   }
   function updateBoss(dt) {
     const boss = game.boss;
+    const arena = currentBossArena();
     const ratio = boss.hp / boss.maxHp;
     const stage = ratio < 0.3 ? 3 : ratio < 0.6 ? 2 : 1;
     boss.hitFlash = Math.max(0, boss.hitFlash - dt); boss.shootCooldown -= dt; boss.summonCooldown -= dt;
@@ -1010,8 +1020,8 @@
     const signedSpeed = phaseSpeed * (boss.vx < 0 ? -1 : 1);
     const speed = signedSpeed * boss.affixSpeedMult * enrageMult;
     boss.x += boss.vx * dt;
-    if (boss.x < CONFIG.enemies.bossArena.x + 420) { boss.x = CONFIG.enemies.bossArena.x + 420; boss.vx = Math.abs(speed); }
-    if (boss.x > CONFIG.enemies.bossArena.right - 150) { boss.x = CONFIG.enemies.bossArena.right - 150; boss.vx = -Math.abs(speed); }
+    if (boss.x < arena.x + 420) { boss.x = arena.x + 420; boss.vx = Math.abs(speed); }
+    if (boss.x > arena.right - 150) { boss.x = arena.right - 150; boss.vx = -Math.abs(speed); }
     boss.facing = game.player.x < boss.x ? -1 : 1;
     const enrageShotMult = boss.enrageThreshold > 0 && ratio <= boss.enrageThreshold ? boss.enrageShotMult : 1;
     const shotMult = boss.affixShotCooldownMult * enrageShotMult;
@@ -1022,7 +1032,7 @@
     }
     if ((stage === 3 || boss.pattern === "summon") && boss.summonCooldown <= 0 && boss.summons < 2 + game.stageIndex) {
       boss.summons += 1; boss.summonCooldown = 5;
-      const minX = CONFIG.enemies.bossArena.x + 80, maxX = CONFIG.enemies.bossArena.x + 340;
+      const minX = arena.x + 80, maxX = arena.x + 340;
       game.enemies.push(makeEnemy({ type: "patrol", x: minX + 80 * boss.summons, y: 436, minX, maxX }));
       showText("REINFORCEMENTS", boss.x - 80, boss.y - 30, "#fca5a5");
     }
@@ -1030,7 +1040,8 @@
 
   function updateBossTrigger(dt) {
     const p = game.player;
-    if (!game.bossActive && game.state === "playing" && p.x > CONFIG.enemies.bossArena.x + 40) {
+    const arena = currentBossArena();
+    if (!game.bossActive && game.state === "playing" && p.x > arena.x + 40) {
       game.state = "bossIntro";
       game.bossIntroTimer = 2.2;
       if (game.boss) {
@@ -1140,7 +1151,7 @@
   function showText(text, x, y, color, life = 1.0) { game.texts.push({ text, x, y, color, life, maxLife: life }); }
 
   function updateCamera(dt) {
-    const arena = CONFIG.enemies.bossArena;
+    const arena = currentBossArena();
     let targetX = game.player.x + game.player.w / 2 - CONFIG.width * CONFIG.camera.lead;
     targetX = clamp(targetX, 0, level.length - CONFIG.width);
     if (game.bossActive && !game.bossDefeated) targetX = clamp(targetX, arena.x, arena.right - CONFIG.width);
@@ -1153,9 +1164,7 @@
     hud.health.textContent = `生命 [${hpFull}${hpEmpty}]`;
     const weaponNames = { normal: "普通武器", rapid: "快速射击", spread: "三向射击" };
     const weapon = game.player.weaponType === "normal" ? weaponNames.normal : `${weaponNames[game.player.weaponType]} ${game.player.weaponTimer.toFixed(1)}秒`;
-    const stageLabel = game.stageIndex + 1 <= STAGES.length
-      ? `第 ${game.stageIndex + 1}/${STAGES.length} 关`
-      : `第 ${game.stageIndex + 1}/∞ 关`;
+    const stageLabel = `第 ${game.stageIndex + 1}/∞ 关`;
     hud.weapon.textContent = `${stageLabel} ${level.label} | ${weapon}`;
     hud.score.textContent = `分数: ${game.score}  用时: ${formatTime(game.runTime)}`;
     if (game.bossActive && game.boss && !game.boss.dead) { hud.bossWrap.classList.remove("hidden"); hud.bossWrap.querySelector("span").textContent = game.boss.bossName; hud.bossFill.style.width = `${Math.max(0, game.boss.hp / game.boss.maxHp) * 100}%`; }
@@ -1239,7 +1248,10 @@
     }
     ctx.fillStyle = "#ef4444";
     for (const hazard of level.hazards) for (let x = hazard.x; x < hazard.x + hazard.w; x += 14) { ctx.beginPath(); ctx.moveTo(x, hazard.y + hazard.h); ctx.lineTo(x + 7, hazard.y); ctx.lineTo(x + 14, hazard.y + hazard.h); ctx.closePath(); ctx.fill(); }
-    if (game.bossActive && !game.bossDefeated) { drawGate(CONFIG.enemies.bossArena.x + 8); drawGate(CONFIG.enemies.bossArena.right - 24); }
+    if (game.bossActive && !game.bossDefeated) {
+      const arena = currentBossArena();
+      drawGate(arena.x + 8); drawGate(arena.right - 24);
+    }
   }
   function drawCheckpoints() {
     for (const checkpoint of level.checkpoints) {
