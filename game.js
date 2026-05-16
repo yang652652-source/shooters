@@ -130,7 +130,7 @@
       label: "前哨基地",
       length: CONFIG.worldLength,
       theme: "base",
-      bossName: "守门机甲",
+      bossName: "守门机甲 阿尔法",
       boss: { hp: 24, damage: 1, pattern: "burst", speed: 70 },
       platforms: [
       { x: 0, y: CONFIG.groundY, w: 760, h: 72, area: "base" },
@@ -170,7 +170,7 @@
       label: "空港天线",
       length: CONFIG.worldLength,
       theme: "jungle",
-      bossName: "天空守卫",
+      bossName: "天空守卫 芙蕾雅",
       boss: { hp: 34, damage: 2, pattern: "fan", speed: 92 },
       platforms: null,
       hazards: [{ x: 760, y: 454, w: 64, h: 24 }, { x: 1880, y: 454, w: 80, h: 24 }, { x: 2780, y: 454, w: 70, h: 24 }],
@@ -194,7 +194,7 @@
       label: "核心工厂",
       length: CONFIG.worldLength,
       theme: "mech",
-      bossName: "核心巨像",
+      bossName: "核心巨像 提丰",
       boss: { hp: 46, damage: 2, pattern: "summon", speed: 118 },
       platforms: null,
       hazards: [{ x: 690, y: 454, w: 80, h: 24 }, { x: 1320, y: 454, w: 90, h: 24 }, { x: 2050, y: 454, w: 90, h: 24 }, { x: 2868, y: 454, w: 86, h: 24 }],
@@ -234,6 +234,7 @@
     camera: { x: 0, y: 0, shake: 0 }, player: null, enemies: [],
     playerBullets: [], enemyBullets: [], particles: [], texts: [], items: [],
     boss: null, bossActive: false, bossDefeated: false, warningTimer: 0,
+    bossIntroTimer: 0, bossIntroName: "",
     safePoint: { x: 80, y: 360 }, fps: 0, fpsTimer: 0, fpsFrames: 0,
     scoreSaved: false, playerId: "玩家1", leaderboardMode: "local"
   };
@@ -288,6 +289,7 @@
     game.enemies = level.enemySpawns.map(makeEnemy); game.playerBullets = []; game.enemyBullets = [];
     game.particles = []; game.texts = []; game.items = level.itemSpawns.map((item) => ({ ...item, w: 24, h: 24, collected: false, bob: Math.random() * 10 }));
     game.boss = makeBoss(); game.bossActive = false; game.bossDefeated = false; game.warningTimer = 0;
+    game.bossIntroTimer = 0; game.bossIntroName = "";
     game.safePoint = { ...level.checkpoints[0] }; game.scoreSaved = false;
   }
   function startRun() {
@@ -667,7 +669,7 @@
     p.vy = Math.min(p.vy, CONFIG.player.maxFallSpeed);
     moveWithPlatforms(p, dt); p.x = clamp(p.x, 0, level.length - p.w);
     if (game.bossActive && !game.bossDefeated) p.x = clamp(p.x, CONFIG.enemies.bossArena.x + 24, CONFIG.enemies.bossArena.right - p.w - 36);
-    if (p.grounded && p.x > game.safePoint.x + 280) updateSafePoint();
+    updateSafePoint();
     if (level.hazards.some((hazard) => aabb(p, hazard)) || p.y > CONFIG.killY) hazardRespawn();
     if (input.isDown("shoot")) shootPlayer();
     if (Math.abs(p.vx) > 10 && p.grounded) p.walkClock += dt * Math.abs(p.vx) * 0.05;
@@ -676,7 +678,7 @@
   function updateSafePoint() {
     let best = game.safePoint;
     for (const checkpoint of level.checkpoints) if (game.player.x >= checkpoint.x) best = checkpoint;
-    if (best.x > game.safePoint.x && isSafeRespawn(best)) {
+    if (best.x > game.safePoint.x) {
       game.safePoint = { ...best };
       showText("检查点", best.x - 18, best.y - 28, "#bbf7d0", 0.9);
     }
@@ -809,9 +811,15 @@
 
   function updateBossTrigger(dt) {
     const p = game.player;
-    if (!game.bossActive && p.x > CONFIG.enemies.bossArena.x + 40) {
-      game.bossActive = true; game.warningTimer = 1.55; game.camera.shake = 7;
-      showText("WARNING", p.x + 130, 170, "#f43f5e", 1.4); tone("warning");
+    if (!game.bossActive && game.state === "playing" && p.x > CONFIG.enemies.bossArena.x + 40) {
+      game.state = "bossIntro";
+      game.bossIntroTimer = 2.2;
+      game.bossIntroName = game.boss ? game.boss.bossName : level.bossName;
+      game.warningTimer = game.bossIntroTimer;
+      game.camera.shake = 5;
+      showText("BOSS INCOMING", p.x + 80, 170, "#f43f5e", 1.2);
+      tone("warning");
+      return;
     }
     game.warningTimer = Math.max(0, game.warningTimer - dt);
   }
@@ -929,6 +937,22 @@
     if (game.state === "menu") { if (input.wasPressed("start")) startRun(); return; }
     if (input.wasPressed("restart")) { resetGame(); startRun(); return; }
     if (game.state === "gameOver" || game.state === "victory" || game.state === "upgrade") return;
+    if (game.state === "bossIntro") {
+      game.time += dt;
+      game.warningTimer = Math.max(0, game.warningTimer - dt);
+      game.bossIntroTimer = Math.max(0, game.bossIntroTimer - dt);
+      if (game.bossIntroTimer === 0) {
+        game.state = "playing";
+        game.bossActive = true;
+        game.warningTimer = 1.1;
+        game.camera.shake = 8;
+        showText(`BOSS: ${game.bossIntroName}`, game.player.x + 35, 170, "#fca5a5", 1.4);
+        tone("warning");
+      }
+      updateCamera(dt);
+      updateParticles(dt);
+      return;
+    }
     if (input.wasPressed("pause")) {
       if (game.state === "playing") { game.state = "paused"; setOverlay("paused"); }
       else if (game.state === "paused") { game.state = "playing"; hideOverlay(); }
@@ -947,7 +971,10 @@
     ctx.save(); ctx.translate(-Math.round(game.camera.x), 0);
     drawLevel(); drawCheckpoints(); drawItems(); drawBullets(game.playerBullets, true); drawBullets(game.enemyBullets, false); drawEnemies(); drawPlayer(); drawParticles(); drawFloatingText();
     if (CONFIG.debug.enabled) drawDebugBoxes();
-    ctx.restore(); if (game.warningTimer > 0) drawWarning(); ctx.restore();
+    ctx.restore();
+    if (game.state === "bossIntro") drawBossIntro();
+    else if (game.warningTimer > 0) drawWarning();
+    ctx.restore();
   }
 
   function drawBackground() {
@@ -1083,6 +1110,30 @@
   function drawWarning() {
     ctx.globalAlpha = clamp(0.55 + Math.sin(game.time * 18) * 0.25, 0.2, 1);
     ctx.fillStyle = "#f43f5e"; ctx.font = "54px 'Courier New', monospace"; ctx.textAlign = "center"; ctx.fillText("WARNING", CONFIG.width / 2, 142); ctx.globalAlpha = 1;
+  }
+  function drawBossIntro() {
+    const progress = 1 - clamp(game.bossIntroTimer / 2.2, 0, 1);
+    ctx.fillStyle = "rgba(2, 6, 23, 0.55)";
+    ctx.fillRect(0, 0, CONFIG.width, CONFIG.height);
+    ctx.globalAlpha = clamp(0.6 + Math.sin(game.time * 10) * 0.25, 0.25, 1);
+    ctx.fillStyle = "#f43f5e";
+    ctx.fillRect(0, 96, CONFIG.width, 10);
+    ctx.fillRect(0, 428, CONFIG.width, 10);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fda4af";
+    ctx.font = "30px 'Courier New', monospace";
+    ctx.fillText("BOSS APPROACH", CONFIG.width / 2, 210);
+    ctx.fillStyle = "#fde68a";
+    ctx.font = "42px 'Courier New', monospace";
+    ctx.fillText(game.bossIntroName || level.bossName, CONFIG.width / 2, 274);
+    ctx.fillStyle = "#e5e7eb";
+    ctx.font = "18px 'Courier New', monospace";
+    ctx.fillText("TARGET LOCKING...", CONFIG.width / 2, 312);
+    ctx.fillStyle = "#22d3ee";
+    ctx.fillRect(CONFIG.width * 0.2, 338, CONFIG.width * 0.6 * progress, 8);
+    ctx.strokeStyle = "rgba(148, 163, 184, 0.8)";
+    ctx.strokeRect(CONFIG.width * 0.2, 338, CONFIG.width * 0.6, 8);
   }
   function drawDebugBoxes() {
     ctx.strokeStyle = "#c084fc"; ctx.lineWidth = 1; strokeRect(game.player); for (const enemy of livingTargets()) strokeRect(enemy);
