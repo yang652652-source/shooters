@@ -54,7 +54,11 @@
       playerKey: "pixel-runner-gunner-player-id",
       maxEntries: 5
     },
-    scoring: { timePar: 420, timeBonusPerSecond: 8, comboWindow: 2.6 }
+    scoring: {
+      runTimePar: 420, timeBonusPerSecond: 8, comboWindow: 2.6,
+      stagePar: 120, stageClearBase: 900, stageClearStep: 120,
+      healthBonusPerHp: 120, speedBonusPerSecond: 10, damagePenaltyPerHp: 45
+    }
   };
 
   const KEY = {
@@ -226,15 +230,47 @@
     { id: "airJump", name: "空中套件", desc: "额外空中跳跃次数 +1。" },
     { id: "dash", name: "冷却冲刺", desc: "冲刺冷却时间缩短。" }
   ];
+  const BOSS_AFFIXES = [
+    {
+      id: "swift", name: "迅捷",
+      apply: (boss) => {
+        boss.affixSpeedMult = 1.2;
+        boss.affixShotCooldownMult = 0.9;
+      }
+    },
+    {
+      id: "shield", name: "护盾",
+      apply: (boss) => {
+        boss.shieldHp = Math.round(boss.maxHp * 0.35);
+        boss.shieldMax = boss.shieldHp;
+      }
+    },
+    {
+      id: "barrage", name: "弹幕",
+      apply: (boss) => {
+        boss.affixExtraShots = 2;
+        boss.affixBulletSpeedBonus = 35;
+      }
+    },
+    {
+      id: "berserk", name: "狂暴",
+      apply: (boss) => {
+        boss.enrageThreshold = 0.45;
+        boss.enrageSpeedMult = 1.35;
+        boss.enrageShotMult = 0.78;
+      }
+    }
+  ];
 
   const game = {
     state: "menu", time: 0, levelTime: 0, score: 0, defeated: 0,
     stageIndex: 0, runTime: 0, stageTime: 0, timeBonus: 0, combo: 0, comboTimer: 0,
+    stageBonus: 0, healthBonus: 0, speedBonus: 0, damagePenalty: 0,
     growth: null, upgradeChoices: [],
     camera: { x: 0, y: 0, shake: 0 }, player: null, enemies: [],
     playerBullets: [], enemyBullets: [], particles: [], texts: [], items: [],
     boss: null, bossActive: false, bossDefeated: false, warningTimer: 0,
-    bossIntroTimer: 0, bossIntroName: "",
+    bossIntroTimer: 0, bossIntroName: "", bossDefeatedCount: 0, damageTaken: 0,
     safePoint: { x: 80, y: 360 }, fps: 0, fpsTimer: 0, fpsFrames: 0,
     scoreSaved: false, playerId: "玩家1", leaderboardMode: "local"
   };
@@ -265,26 +301,180 @@
   function makeGrowth() {
     return { maxHp: CONFIG.player.maxHp, speedMult: 1, fireRateMult: 1, bulletDamage: 1, airJumps: CONFIG.player.airJumps, dashCooldownMult: 1 };
   }
+  function getSeedDate() {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  function hashString(text) {
+    let hash = 2166136261;
+    for (const char of text) {
+      hash ^= char.charCodeAt(0);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+  function makeRng(seed) {
+    let t = seed >>> 0;
+    return () => {
+      t += 0x6D2B79F5;
+      let r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function cloneStage(stage) {
+    return {
+      ...stage,
+      boss: { ...stage.boss },
+      platforms: stage.platforms.map((platform) => ({ ...platform })),
+      hazards: stage.hazards.map((hazard) => ({ ...hazard })),
+      checkpoints: stage.checkpoints.map((point) => ({ ...point })),
+      enemySpawns: stage.enemySpawns.map((spawn) => ({ ...spawn })),
+      itemSpawns: stage.itemSpawns.map((spawn) => ({ ...spawn }))
+    };
+  }
+  function stageCycleTheme(index) {
+    const themes = ["base", "jungle", "mech"];
+    return themes[index % themes.length];
+  }
+  function scaleBossStats(baseBoss, stageNumber) {
+    if (stageNumber <= STAGES.length) return { ...baseBoss };
+    const delta = stageNumber - STAGES.length;
+    const hpScale = Math.pow(1.18, delta);
+    const cooldownScale = Math.max(0.35, Math.pow(0.94, delta));
+    const bulletSpeedScale = Math.pow(1.08, delta);
+    return {
+      ...baseBoss,
+      hp: Math.round(baseBoss.hp * hpScale),
+      damage: baseBoss.damage + Math.floor(delta / 4),
+      cooldownScale,
+      bulletSpeedScale
+    };
+  }
+  function generateProceduralStage(index) {
+    const stageNumber = index + 1;
+    const seed = hashString(`${cleanPlayerId(game.playerId, true)}|${getSeedDate()}|${stageNumber}`);
+    const rand = makeRng(seed);
+    const theme = stageCycleTheme(index);
+    const base = cloneStage(STAGES[0]);
+    const worldLength = 2800 + Math.floor(rand() * 400);
+    const areaName = ["边境试炼", "空域试炼", "钢铁试炼"][index % 3];
+    const nameSeed = ["瓦尔基里", "阿瑞斯", "赫菲斯托", "巴洛尔", "奥伯龙"];
+    const bossCoreName = nameSeed[Math.floor(rand() * nameSeed.length)];
+    const bossName = `试炼统帅 ${bossCoreName} ${stageNumber}`;
+    const bossPattern = ["burst", "fan", "summon"][Math.floor(rand() * 3)];
+    const bossSpeedBase = 90 + Math.floor(rand() * 26);
+    const bossBase = { hp: 52 + Math.floor(rand() * 10), damage: 2, pattern: bossPattern, speed: bossSpeedBase };
+    const scaledBoss = scaleBossStats(bossBase, stageNumber);
+    const platforms = base.platforms.map((platform) => {
+      if (platform.y < CONFIG.groundY) {
+        const yJitter = Math.floor((rand() - 0.5) * 46);
+        return { ...platform, y: clamp(platform.y + yJitter, 308, 432), area: theme };
+      }
+      return { ...platform, area: platform.area === "boss" ? "boss" : theme };
+    });
+    platforms[4] = { ...platforms[4], x: Math.max(2300, worldLength - 1300), w: 1300 };
+    const checkpoints = [
+      { x: 80, y: 360 },
+      { x: Math.floor(worldLength * 0.26), y: 350 },
+      { x: Math.floor(worldLength * 0.50), y: 340 },
+      { x: Math.floor(worldLength * 0.72), y: 338 },
+      { x: Math.floor(worldLength * 0.86), y: 332 }
+    ];
+    const hazards = [];
+    const hazardCount = 2 + Math.floor(rand() * 3);
+    for (let i = 0; i < hazardCount; i += 1) {
+      const w = 58 + Math.floor(rand() * 36);
+      const x = 620 + Math.floor(rand() * (worldLength - 1200));
+      hazards.push({ x, y: 454, w, h: 24 });
+    }
+    const enemySpawns = [];
+    const enemyCount = 7 + Math.min(8, Math.floor((stageNumber - 1) / 2));
+    for (let i = 0; i < enemyCount; i += 1) {
+      const roll = rand();
+      const x = 520 + Math.floor(rand() * (worldLength - 900));
+      if (roll < 0.45) enemySpawns.push({ type: "patrol", x, y: 436, minX: x - 120, maxX: x + 120 });
+      else if (roll < 0.75) enemySpawns.push({ type: "turret", x, y: 352 + Math.floor(rand() * 40) });
+      else enemySpawns.push({ type: "flyer", x, y: 200 + Math.floor(rand() * 90), range: 120 + Math.floor(rand() * 110) });
+    }
+    const itemSpawns = [
+      { type: "health", x: 920 + Math.floor(rand() * 220), y: 420 },
+      { type: rand() < 0.5 ? "rapid" : "spread", x: 1620 + Math.floor(rand() * 250), y: 340 },
+      { type: "health", x: worldLength - 520, y: 320 }
+    ];
+    return {
+      name: `TRIAL-${stageNumber}`,
+      label: `${areaName} ${stageNumber}`,
+      length: worldLength,
+      theme,
+      bossName,
+      boss: scaledBoss,
+      platforms,
+      hazards,
+      checkpoints,
+      enemySpawns,
+      itemSpawns
+    };
+  }
+  function resolveStage(index) {
+    if (index < STAGES.length) return STAGES[index];
+    return generateProceduralStage(index);
+  }
+  function affixesForStage(stageNumber) {
+    if (stageNumber <= STAGES.length) return [];
+    const unlockedCount = Math.min(BOSS_AFFIXES.length, Math.floor((stageNumber - STAGES.length) / 3) + 1);
+    const seed = hashString(`${cleanPlayerId(game.playerId, true)}|${getSeedDate()}|AFFIX|${stageNumber}`);
+    const rand = makeRng(seed);
+    const pool = BOSS_AFFIXES.slice();
+    for (let i = pool.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(rand() * (i + 1));
+      const tmp = pool[i];
+      pool[i] = pool[j];
+      pool[j] = tmp;
+    }
+    return pool.slice(0, unlockedCount);
+  }
+  function applyBossAffixes(boss, stageNumber) {
+    const affixes = affixesForStage(stageNumber);
+    boss.affixes = affixes.map((affix) => affix.name);
+    boss.affixSpeedMult = 1;
+    boss.affixShotCooldownMult = 1;
+    boss.affixExtraShots = 0;
+    boss.affixBulletSpeedBonus = 0;
+    boss.shieldHp = 0;
+    boss.shieldMax = 0;
+    boss.enrageThreshold = 0;
+    boss.enrageSpeedMult = 1;
+    boss.enrageShotMult = 1;
+    for (const affix of affixes) affix.apply(boss);
+  }
 
   function makeBoss() {
     const data = level.boss;
-    return {
+    const boss = {
       type: "boss", bossName: level.bossName, pattern: data.pattern,
       x: 3890, y: CONFIG.groundY - 104, w: 78, h: 104,
       vx: -data.speed, vy: 0, facing: -1, hp: data.hp, maxHp: data.hp,
       shootCooldown: 1.1, summonCooldown: 4, waveCooldown: 2.5,
       summons: 0, hitFlash: 0, dead: false, active: true, damage: data.damage
     };
+    applyBossAffixes(boss, game.stageIndex + 1);
+    return boss;
   }
 
   function resetGame() {
     game.state = "menu"; game.time = 0; game.levelTime = 0; game.runTime = 0; game.stageTime = 0;
     game.score = 0; game.defeated = 0; game.stageIndex = 0; game.timeBonus = 0;
+    game.stageBonus = 0; game.healthBonus = 0; game.speedBonus = 0; game.damagePenalty = 0;
+    game.damageTaken = 0; game.bossDefeatedCount = 0;
     game.combo = 0; game.comboTimer = 0; game.growth = makeGrowth(); loadStage(0);
     setOverlay("menu");
   }
   function loadStage(index) {
-    game.stageIndex = index; level = STAGES[index]; game.stageTime = 0;
+    game.stageIndex = index; level = resolveStage(index); game.stageTime = 0;
     game.camera = { x: 0, y: 0, shake: 0 }; game.player = makePlayer();
     game.enemies = level.enemySpawns.map(makeEnemy); game.playerBullets = []; game.enemyBullets = [];
     game.particles = []; game.texts = []; game.items = level.itemSpawns.map((item) => ({ ...item, w: 24, h: 24, collected: false, bob: Math.random() * 10 }));
@@ -363,7 +553,8 @@
     hud.overlaySub.replaceChildren(...groups.map(makeKeyGroup));
   }
   function stageCardText() {
-    return `STAGE ${game.stageIndex + 1}/${STAGES.length} - ${level.label}`;
+    if (game.stageIndex + 1 <= STAGES.length) return `STAGE ${game.stageIndex + 1}/${STAGES.length} - ${level.label}`;
+    return `STAGE ${game.stageIndex + 1}/∞ - ${level.label}`;
   }
   function makeKeyGroup(group) {
     const wrap = document.createElement("div");
@@ -435,12 +626,27 @@
     });
   }
   function resultSummary() {
-    return `${game.playerId} - 分数 ${game.score} - 用时 ${formatTime(game.runTime)} - 击败 ${game.defeated} - 时间奖励 ${game.timeBonus}`;
+    return `${game.playerId} - 分数 ${game.score} - 最高关 ${game.stageIndex + 1} - 用时 ${formatTime(game.runTime)} - 击败 ${game.defeated} - Boss ${game.bossDefeatedCount}`;
   }
   function awardTimeBonus() {
-    game.timeBonus = Math.max(0, Math.floor((CONFIG.scoring.timePar - game.runTime) * CONFIG.scoring.timeBonusPerSecond));
+    game.timeBonus = Math.max(0, Math.floor((CONFIG.scoring.runTimePar - game.runTime) * CONFIG.scoring.timeBonusPerSecond));
     game.score += game.timeBonus;
     if (game.timeBonus > 0) showText(`时间奖励 +${game.timeBonus}`, game.player.x - 25, game.player.y - 44, "#fde68a", 1.8);
+  }
+  function awardStageCompletionBonus() {
+    const stageNumber = game.stageIndex + 1;
+    const stageClear = CONFIG.scoring.stageClearBase + game.stageIndex * CONFIG.scoring.stageClearStep;
+    const healthBonus = game.player.hp * CONFIG.scoring.healthBonusPerHp;
+    const speedBonus = Math.max(0, Math.floor((CONFIG.scoring.stagePar - game.stageTime) * CONFIG.scoring.speedBonusPerSecond));
+    const penalty = game.damageTaken * CONFIG.scoring.damagePenaltyPerHp;
+    const total = Math.max(0, stageClear + healthBonus + speedBonus - penalty);
+    game.stageBonus += stageClear;
+    game.healthBonus += healthBonus;
+    game.speedBonus += speedBonus;
+    game.damagePenalty += penalty;
+    game.score += total;
+    showText(`第${stageNumber}关结算 +${total}`, game.player.x - 30, game.player.y - 46, "#fde68a", 1.4);
+    game.damageTaken = 0;
   }
   function chooseUpgrade(id) {
     const p = game.player;
@@ -491,6 +697,9 @@
       runTime: Math.round(game.runTime),
       timeBonus: game.timeBonus,
       stage: game.stageIndex + 1,
+      highestStage: game.stageIndex + 1,
+      bossDefeated: game.bossDefeatedCount,
+      damageTaken: game.damagePenalty,
       defeated: game.defeated,
       result,
       date: new Date().toLocaleDateString()
@@ -520,8 +729,10 @@
     list.className = "leaderboard-list";
     for (const entry of entries) {
       const result = entry.result === "victory" ? "通关" : "失败";
+      const highestStage = entry.highestStage || entry.stage || 1;
+      const bossDefeated = entry.bossDefeated || 0;
       const row = document.createElement("li");
-      row.textContent = `${entry.playerId || "玩家"} - ${entry.score} 分 - ${result} - ${formatTime(entry.runTime || entry.time || 0)} - 击败 ${entry.defeated || 0}`;
+      row.textContent = `${entry.playerId || "玩家"} - ${entry.score} 分 - 关卡 ${highestStage} - ${result} - ${formatTime(entry.runTime || entry.time || 0)} - 击败 ${entry.defeated || 0} - Boss ${bossDefeated}`;
       list.append(row);
     }
     const status = document.createElement("div");
@@ -723,6 +934,7 @@
     const p = game.player;
     if (p.damageInvuln > 0 || p.dashTimer > 0 || game.state !== "playing") return;
     p.hp -= amount; p.damageInvuln = CONFIG.player.damageInvuln; p.hitFlash = 0.18;
+    game.damageTaken += amount;
     game.camera.shake = Math.max(game.camera.shake, amount > 1 ? 12 : 8);
     addParticles(p.x + p.w / 2, p.y + p.h / 2, "#fda4af", 16, 150); tone("hurt");
     showText(`${reason} -${amount}`, p.x - 8, p.y - 24, "#fda4af", 0.9);
@@ -735,7 +947,9 @@
     for (let i = 0; i < count; i += 1) {
       const offset = count === 1 ? 0 : (i - (count - 1) / 2) * spread;
       const angle = base + offset;
-      const speed = enemy.type === "boss" ? 215 + game.stageIndex * 35 : CONFIG.enemies.enemyBulletSpeed;
+      const speed = enemy.type === "boss"
+        ? 215 + game.stageIndex * 35 + (enemy.affixBulletSpeedBonus || 0)
+        : CONFIG.enemies.enemyBulletSpeed;
       game.enemyBullets.push({ x: fromX - 5, y: fromY - 5, w: 11, h: 11, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, damage: enemy.type === "boss" ? enemy.damage : 1, life: 5, color: enemy.type === "boss" ? "#c084fc" : "#fb7185" });
     }
   }
@@ -791,15 +1005,20 @@
     const ratio = boss.hp / boss.maxHp;
     const stage = ratio < 0.3 ? 3 : ratio < 0.6 ? 2 : 1;
     boss.hitFlash = Math.max(0, boss.hitFlash - dt); boss.shootCooldown -= dt; boss.summonCooldown -= dt;
-    const speed = stage === 3 ? boss.vx < 0 ? -level.boss.speed * 1.3 : level.boss.speed * 1.3 : boss.vx < 0 ? -level.boss.speed : level.boss.speed;
+    const enrageMult = boss.enrageThreshold > 0 && ratio <= boss.enrageThreshold ? boss.enrageSpeedMult : 1;
+    const phaseSpeed = stage === 3 ? level.boss.speed * 1.3 : level.boss.speed;
+    const signedSpeed = phaseSpeed * (boss.vx < 0 ? -1 : 1);
+    const speed = signedSpeed * boss.affixSpeedMult * enrageMult;
     boss.x += boss.vx * dt;
     if (boss.x < CONFIG.enemies.bossArena.x + 420) { boss.x = CONFIG.enemies.bossArena.x + 420; boss.vx = Math.abs(speed); }
     if (boss.x > CONFIG.enemies.bossArena.right - 150) { boss.x = CONFIG.enemies.bossArena.right - 150; boss.vx = -Math.abs(speed); }
     boss.facing = game.player.x < boss.x ? -1 : 1;
+    const enrageShotMult = boss.enrageThreshold > 0 && ratio <= boss.enrageThreshold ? boss.enrageShotMult : 1;
+    const shotMult = boss.affixShotCooldownMult * enrageShotMult;
     if (boss.shootCooldown <= 0) {
-      if (boss.pattern === "burst") { enemyShoot(boss, stage, 0.18); boss.shootCooldown = stage === 3 ? 0.82 : 1.05; }
-      if (boss.pattern === "fan") { enemyShoot(boss, 3 + stage, 0.18); boss.shootCooldown = 1.15 - stage * 0.08; }
-      if (boss.pattern === "summon") { enemyShoot(boss, 3, 0.25); bossRadialShot(boss, 6 + stage * 2, 150 + stage * 22); boss.shootCooldown = 1.45 - stage * 0.12; }
+      if (boss.pattern === "burst") { enemyShoot(boss, stage + boss.affixExtraShots, 0.18); boss.shootCooldown = (stage === 3 ? 0.82 : 1.05) * shotMult; }
+      if (boss.pattern === "fan") { enemyShoot(boss, 3 + stage + boss.affixExtraShots, 0.18); boss.shootCooldown = (1.15 - stage * 0.08) * shotMult; }
+      if (boss.pattern === "summon") { enemyShoot(boss, 3 + boss.affixExtraShots, 0.25); bossRadialShot(boss, 6 + stage * 2 + boss.affixExtraShots, 150 + stage * 22 + boss.affixBulletSpeedBonus); boss.shootCooldown = (1.45 - stage * 0.12) * shotMult; }
     }
     if ((stage === 3 || boss.pattern === "summon") && boss.summonCooldown <= 0 && boss.summons < 2 + game.stageIndex) {
       boss.summons += 1; boss.summonCooldown = 5;
@@ -814,7 +1033,12 @@
     if (!game.bossActive && game.state === "playing" && p.x > CONFIG.enemies.bossArena.x + 40) {
       game.state = "bossIntro";
       game.bossIntroTimer = 2.2;
-      game.bossIntroName = game.boss ? game.boss.bossName : level.bossName;
+      if (game.boss) {
+        const affixText = game.boss.affixes && game.boss.affixes.length ? ` [${game.boss.affixes.join(" / ")}]` : "";
+        game.bossIntroName = `${game.boss.bossName}${affixText}`;
+      } else {
+        game.bossIntroName = level.bossName;
+      }
       game.warningTimer = game.bossIntroTimer;
       game.camera.shake = 5;
       showText("BOSS INCOMING", p.x + 80, 170, "#f43f5e", 1.2);
@@ -855,6 +1079,13 @@
     return targets;
   }
   function damageEnemy(enemy, amount) {
+    if (enemy.type === "boss" && enemy.shieldHp > 0) {
+      enemy.shieldHp = Math.max(0, enemy.shieldHp - amount);
+      addParticles(enemy.x + enemy.w / 2, enemy.y + enemy.h * 0.4, "#60a5fa", 8, 90);
+      showText("护盾吸收", enemy.x - 20, enemy.y - 18, "#93c5fd", 0.6);
+      if (enemy.shieldHp > 0) return;
+      showText("护盾破碎", enemy.x - 18, enemy.y - 28, "#bfdbfe", 0.8);
+    }
     enemy.hp -= amount; enemy.hitFlash = 0.08;
     if (enemy.hp > 0) return;
     enemy.dead = true; game.defeated += 1;
@@ -866,6 +1097,7 @@
       game.score += baseScore + comboBonus;
       if (comboBonus > 0) showText(`连击 x${game.combo} +${comboBonus}`, enemy.x - 18, enemy.y - 24, "#fde68a", 0.9);
     } else {
+      game.bossDefeatedCount += 1;
       game.score += baseScore;
     }
     addExplosion(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, enemy.type === "boss" ? 42 : 20); tone("boom");
@@ -873,14 +1105,10 @@
   }
   function finishStage() {
     game.bossDefeated = true;
-    if (game.stageIndex < STAGES.length - 1) {
-      game.state = "upgrade";
-      setOverlay("upgrade");
-      return;
-    }
+    awardStageCompletionBonus();
     awardTimeBonus();
-    game.state = "victory";
-    setOverlay("victory");
+    game.state = "upgrade";
+    setOverlay("upgrade");
   }
 
   function updateItems(dt) {
@@ -925,7 +1153,10 @@
     hud.health.textContent = `生命 [${hpFull}${hpEmpty}]`;
     const weaponNames = { normal: "普通武器", rapid: "快速射击", spread: "三向射击" };
     const weapon = game.player.weaponType === "normal" ? weaponNames.normal : `${weaponNames[game.player.weaponType]} ${game.player.weaponTimer.toFixed(1)}秒`;
-    hud.weapon.textContent = `第 ${game.stageIndex + 1}/${STAGES.length} 关 ${level.label} | ${weapon}`;
+    const stageLabel = game.stageIndex + 1 <= STAGES.length
+      ? `第 ${game.stageIndex + 1}/${STAGES.length} 关`
+      : `第 ${game.stageIndex + 1}/∞ 关`;
+    hud.weapon.textContent = `${stageLabel} ${level.label} | ${weapon}`;
     hud.score.textContent = `分数: ${game.score}  用时: ${formatTime(game.runTime)}`;
     if (game.bossActive && game.boss && !game.boss.dead) { hud.bossWrap.classList.remove("hidden"); hud.bossWrap.querySelector("span").textContent = game.boss.bossName; hud.bossFill.style.width = `${Math.max(0, game.boss.hp / game.boss.maxHp) * 100}%`; }
     else hud.bossWrap.classList.add("hidden");
@@ -1079,6 +1310,13 @@
     ctx.fillStyle = "#fecaca"; ctx.fillRect(b.x + (b.facing > 0 ? b.w - 28 : 18), b.y + 18, 12, 7);
     ctx.fillStyle = "#1f2937"; ctx.fillRect(b.facing > 0 ? b.x + b.w - 6 : b.x - 28, b.y + 56, 34, 10);
     ctx.fillStyle = "#991b1b"; ctx.fillRect(b.x + 18, b.y + 88, 16, 16); ctx.fillRect(b.x + b.w - 34, b.y + 88, 16, 16);
+    if (b.shieldHp > 0) {
+      ctx.strokeStyle = "rgba(96, 165, 250, 0.9)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
+      ctx.fillStyle = "rgba(96, 165, 250, 0.32)";
+      ctx.fillRect(b.x - 4, b.y - 4, b.w + 8, 5);
+    }
   }
 
   function drawItems() {
