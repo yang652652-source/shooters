@@ -1,26 +1,27 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pixel Runner Gunner</title>
+  <title>像素突击手</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main id="game-shell" aria-label="2D side scrolling shooter demo">
+  <main id="game-shell" aria-label="2D 横版射击游戏">
     <canvas id="game" width="960" height="540"></canvas>
 
     <section id="hud" aria-live="polite">
       <div class="hud-left">
-        <span id="health">HP [-----]</span>
+        <span id="health">生命 [-----]</span>
         <span id="lives-note"></span>
       </div>
       <div class="hud-right">
-        <span id="weapon">WEAPON: NORMAL</span>
-        <span id="score">SCORE: 0</span>
+        <span id="weapon">第 1/3 关 | 普通武器</span>
+        <span id="score">分数: 0</span>
+        <span id="pause-hint" aria-label="暂停提示"><span class="hud-key">P</span> 暂停</span>
       </div>
       <div id="boss-wrap" class="hidden">
-        <span>BOSS</span>
+        <span>首领</span>
         <div id="boss-track"><div id="boss-fill"></div></div>
       </div>
       <div id="debug"></div>
@@ -28,16 +29,31 @@
 
     <section id="overlay" class="overlay">
       <div class="panel">
-        <h1 id="overlay-title">PIXEL RUNNER GUNNER</h1>
+        <h1 id="overlay-title">SHOOTERS READY</h1>
         <p id="overlay-body">
-          A / D move, W or Space jump twice, S crouch, J shoot, K dash, P pause.
+          A/D 或方向键移动，W/空格/上方向键跳跃，可二段跳；S/下方向键下蹲，J 射击，K 冲刺，P 暂停。
         </p>
         <label class="player-id-field">
-          <span>PLAYER ID</span>
-          <input id="player-id" type="text" maxlength="16" autocomplete="nickname" spellcheck="false" placeholder="PLAYER1">
+          <span id="player-id-label">玩家 ID</span>
+          <input id="player-id" type="text" maxlength="16" autocomplete="nickname" spellcheck="false" placeholder="玩家1">
         </label>
-        <p id="overlay-sub">Press Enter or J to start</p>
-        <div id="leaderboard" aria-label="Score leaderboard"></div>
+        <div id="player-summary" class="player-summary hidden" aria-live="polite">
+          <div class="summary-item">
+            <span class="summary-label">玩家ID</span>
+            <strong id="summary-player-id">玩家1</strong>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">本关用时</span>
+            <strong id="summary-stage-time">0:00</strong>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">本关击败</span>
+            <strong id="summary-defeated">0</strong>
+          </div>
+        </div>
+        <div id="overlay-sub" class="key-guide" aria-label="按键指引"></div>
+        <div id="upgrade-options" class="upgrade-options hidden" aria-label="选择永久强化"></div>
+        <div id="leaderboard" aria-label="积分排行榜"></div>
       </div>
     </section>
   </main>
