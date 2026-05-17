@@ -228,6 +228,7 @@
     { id: "fireRate", name: "过热枪管", desc: "射击间隔缩短 15%。" },
     { id: "bullet", name: "穿甲弹药", desc: "子弹伤害 +1。" },
     { id: "airJump", name: "空中套件", desc: "额外空中跳跃次数 +1。" },
+    { id: "jumpHeight", name: "弹跳核心", desc: "跳跃高度提升 15%。" },
     { id: "dash", name: "冷却冲刺", desc: "冲刺冷却时间缩短。" }
   ];
   const BOSS_AFFIXES = [
@@ -271,6 +272,7 @@
     playerBullets: [], enemyBullets: [], particles: [], texts: [], items: [],
     boss: null, bossActive: false, bossDefeated: false, warningTimer: 0,
     bossIntroTimer: 0, bossIntroName: "", bossDefeatedCount: 0, damageTaken: 0,
+    bossTriggerCharge: 0, bossSceneActive: false, upgradeSelectedIndex: 0, upgradeButtons: [],
     safePoint: { x: 80, y: 360 }, fps: 0, fpsTimer: 0, fpsFrames: 0,
     scoreSaved: false, playerId: "玩家1", leaderboardMode: "local"
   };
@@ -299,7 +301,7 @@
   }
 
   function makeGrowth() {
-    return { maxHp: CONFIG.player.maxHp, speedMult: 1, fireRateMult: 1, bulletDamage: 1, airJumps: CONFIG.player.airJumps, dashCooldownMult: 1 };
+    return { maxHp: CONFIG.player.maxHp, speedMult: 1, fireRateMult: 1, bulletDamage: 1, airJumps: CONFIG.player.airJumps, jumpMult: 1, dashCooldownMult: 1 };
   }
   function getSeedDate() {
     const now = new Date();
@@ -348,11 +350,14 @@
     const bulletSpeedScale = Math.pow(1.08, delta);
     return {
       ...baseBoss,
-      hp: Math.round(baseBoss.hp * hpScale),
-      damage: baseBoss.damage + Math.floor(delta / 4),
+      hp: Math.round(baseBoss.hp * hpScale * 1.35),
+      damage: Math.max(1, Math.round((baseBoss.damage + Math.floor(delta / 5)) * 0.65)),
       cooldownScale,
       bulletSpeedScale
     };
+  }
+  function isSpecialBossStage(stageNumber) {
+    return stageNumber % 5 === 0;
   }
   function generateProceduralStage(index) {
     const stageNumber = index + 1;
@@ -369,6 +374,11 @@
     const bossSpeedBase = 90 + Math.floor(rand() * 26);
     const bossBase = { hp: 52 + Math.floor(rand() * 10), damage: 2, pattern: bossPattern, speed: bossSpeedBase };
     const scaledBoss = scaleBossStats(bossBase, stageNumber);
+    if (isSpecialBossStage(stageNumber)) {
+      scaledBoss.hp = Math.round(scaledBoss.hp * 1.35);
+      scaledBoss.damage = Math.max(1, Math.round(scaledBoss.damage * 0.85));
+      scaledBoss.pattern = "summon";
+    }
     const platforms = base.platforms.map((platform) => {
       if (platform.y < CONFIG.groundY) {
         const yJitter = Math.floor((rand() - 0.5) * 46);
@@ -410,7 +420,7 @@
       label: `${areaName} ${stageNumber}`,
       length: worldLength,
       theme,
-      bossName,
+      bossName: isSpecialBossStage(stageNumber) ? `${bossName} [特别讨伐]` : bossName,
       boss: scaledBoss,
       platforms,
       hazards,
@@ -428,6 +438,48 @@
     const right = level.length;
     const x = Math.max(900, right - width);
     return { x, right };
+  }
+  function bossDoorRect() {
+    const x = Math.max(260, level.length - 220);
+    return { x, y: CONFIG.groundY - 76, w: 64, h: 76 };
+  }
+  function bossBattlePlatforms() {
+    const arena = currentBossArena();
+    return [
+      { x: arena.x, y: CONFIG.groundY, w: arena.right - arena.x, h: 72, area: "boss" },
+      { x: arena.x + 170, y: 390, w: 180, h: 22, area: "boss" },
+      { x: arena.x + 430, y: 330, w: 170, h: 22, area: "boss" },
+      { x: arena.x + 700, y: 392, w: 190, h: 22, area: "boss" }
+    ];
+  }
+  function activePlatforms() {
+    return game.bossSceneActive ? bossBattlePlatforms() : level.platforms;
+  }
+  function supportYForSpawn(spawn, enemyHeight) {
+    const targetFoot = spawn.y + enemyHeight;
+    const candidates = level.platforms.filter((platform) => spawn.x + 12 >= platform.x && spawn.x + 12 <= platform.x + platform.w);
+    if (!candidates.length) return CONFIG.groundY;
+    let best = candidates[0];
+    let bestDelta = Math.abs(best.y - targetFoot);
+    for (const platform of candidates) {
+      const delta = Math.abs(platform.y - targetFoot);
+      if (delta < bestDelta) {
+        best = platform;
+        bestDelta = delta;
+      }
+    }
+    return best.y;
+  }
+  function normalizeEnemySpawnPositions() {
+    for (const enemy of game.enemies) {
+      if (enemy.type === "flyer") continue;
+      const supportY = supportYForSpawn(enemy, enemy.h);
+      enemy.y = supportY - enemy.h;
+      if (enemy.type === "patrol") {
+        enemy.minX = Math.max(0, enemy.minX);
+        enemy.maxX = Math.min(level.length - enemy.w, enemy.maxX);
+      }
+    }
   }
   function affixesForStage(stageNumber) {
     if (stageNumber <= STAGES.length) return [];
@@ -466,7 +518,8 @@
       x: arena.x + 560, y: CONFIG.groundY - 104, w: 78, h: 104,
       vx: -data.speed, vy: 0, facing: -1, hp: data.hp, maxHp: data.hp,
       shootCooldown: 1.1, summonCooldown: 4, waveCooldown: 2.5,
-      summons: 0, hitFlash: 0, dead: false, active: true, damage: data.damage
+      summons: 0, hitFlash: 0, dead: false, active: true, damage: data.damage,
+      isSpecial: isSpecialBossStage(game.stageIndex + 1)
     };
     applyBossAffixes(boss, game.stageIndex + 1);
     return boss;
@@ -477,6 +530,7 @@
     game.score = 0; game.defeated = 0; game.stageIndex = 0; game.timeBonus = 0;
     game.stageBonus = 0; game.healthBonus = 0; game.speedBonus = 0; game.damagePenalty = 0;
     game.damageTaken = 0; game.bossDefeatedCount = 0;
+    game.bossTriggerCharge = 0; game.bossSceneActive = false; game.upgradeButtons = []; game.upgradeSelectedIndex = 0;
     game.combo = 0; game.comboTimer = 0; game.growth = makeGrowth(); loadStage(0);
     setOverlay("menu");
   }
@@ -484,9 +538,11 @@
     game.stageIndex = index; level = resolveStage(index); game.stageTime = 0;
     game.camera = { x: 0, y: 0, shake: 0 }; game.player = makePlayer();
     game.enemies = level.enemySpawns.map(makeEnemy); game.playerBullets = []; game.enemyBullets = [];
+    normalizeEnemySpawnPositions();
     game.particles = []; game.texts = []; game.items = level.itemSpawns.map((item) => ({ ...item, w: 24, h: 24, collected: false, bob: Math.random() * 10 }));
     game.boss = makeBoss(); game.bossActive = false; game.bossDefeated = false; game.warningTimer = 0;
     game.bossIntroTimer = 0; game.bossIntroName = "";
+    game.bossTriggerCharge = 0; game.bossSceneActive = false;
     game.safePoint = { ...level.checkpoints[0] }; game.scoreSaved = false;
   }
   function startRun() {
@@ -521,6 +577,7 @@
     hud.playerId.readOnly = false;
     hud.playerId.classList.remove("readonly");
     if (isReadOnlyStage) {
+      hud.playerId.blur();
       if (field) field.classList.add("hidden");
       hud.playerSummary.classList.remove("hidden");
       hud.summaryPlayerId.textContent = game.playerId || "玩家1";
@@ -661,6 +718,7 @@
     if (id === "fireRate") game.growth.fireRateMult *= 0.85;
     if (id === "bullet") game.growth.bulletDamage += 1;
     if (id === "airJump") game.growth.airJumps += 1;
+    if (id === "jumpHeight") game.growth.jumpMult *= 1.15;
     if (id === "dash") game.growth.dashCooldownMult *= 0.78;
     loadStage(game.stageIndex + 1);
     game.state = "playing";
@@ -668,9 +726,12 @@
     showText(`强化: ${UPGRADES.find((upgrade) => upgrade.id === id).name}`, game.player.x + 20, game.player.y - 22, "#fde68a", 1.6);
   }
   function renderUpgradeOptions() {
+    hud.playerId.blur();
     hud.upgradeOptions.replaceChildren();
+    game.upgradeButtons = [];
+    game.upgradeSelectedIndex = 0;
     game.upgradeChoices = UPGRADES.slice().sort(() => Math.random() - 0.5).slice(0, 3);
-    for (const upgrade of game.upgradeChoices) {
+    for (const [index, upgrade] of game.upgradeChoices.entries()) {
       const button = document.createElement("button");
       button.className = "upgrade-option";
       button.type = "button";
@@ -682,8 +743,20 @@
       desc.textContent = upgrade.desc;
       button.append(name, desc);
       button.addEventListener("click", () => chooseUpgrade(upgrade.id));
+      button.dataset.index = String(index);
+      game.upgradeButtons.push(button);
       hud.upgradeOptions.append(button);
     }
+    applyUpgradeSelection();
+  }
+  function applyUpgradeSelection() {
+    for (const [idx, button] of game.upgradeButtons.entries()) {
+      button.classList.toggle("selected", idx === game.upgradeSelectedIndex);
+    }
+  }
+  function chooseSelectedUpgrade() {
+    const pick = game.upgradeChoices[game.upgradeSelectedIndex];
+    if (pick) chooseUpgrade(pick.id);
   }
   function loadLeaderboard() {
     try {
@@ -817,7 +890,7 @@
   function rectFor(e) { return { x: e.x, y: e.y, w: e.w, h: e.h }; }
   function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
   function signNonZero(value, fallback = 1) { return value > 0 ? 1 : value < 0 ? -1 : fallback; }
-  function collidesWithPlatforms(rect) { return level.platforms.some((platform) => aabb(rect, platform)); }
+  function collidesWithPlatforms(rect) { return activePlatforms().some((platform) => aabb(rect, platform)); }
   function canStand(player) {
     const bottom = player.y + player.h;
     return !collidesWithPlatforms({ x: player.x, y: bottom - player.standH, w: player.w, h: player.standH });
@@ -826,7 +899,7 @@
   function moveWithPlatforms(entity, dt) {
     entity.x += entity.vx * dt;
     const xRect = rectFor(entity);
-    for (const platform of level.platforms) {
+    for (const platform of activePlatforms()) {
       if (!aabb(xRect, platform)) continue;
       if (entity.vx > 0) entity.x = platform.x - entity.w;
       if (entity.vx < 0) entity.x = platform.x + platform.w;
@@ -835,7 +908,7 @@
     entity.y += entity.vy * dt;
     entity.grounded = false;
     const yRect = rectFor(entity);
-    for (const platform of level.platforms) {
+    for (const platform of activePlatforms()) {
       if (!aabb(yRect, platform)) continue;
       if (entity.vy > 0) { entity.y = platform.y - entity.h; entity.grounded = true; }
       else if (entity.vy < 0) entity.y = platform.y + platform.h;
@@ -875,7 +948,8 @@
       const canGroundJump = p.coyote > 0;
       const canAirJump = !canGroundJump && p.airJumpsRemaining > 0;
       if (canGroundJump || canAirJump) {
-        p.vy = canAirJump ? CONFIG.player.jumpVelocity * 0.92 : CONFIG.player.jumpVelocity;
+        const baseJump = CONFIG.player.jumpVelocity * game.growth.jumpMult;
+        p.vy = canAirJump ? baseJump * 0.92 : baseJump;
         p.grounded = false; p.coyote = 0; p.jumpBuffer = 0;
         if (canAirJump) p.airJumpsRemaining -= 1;
         addParticles(p.x + p.w / 2, p.y + p.h, canAirJump ? "#93c5fd" : "#e0f2fe", canAirJump ? 12 : 8, 90); tone("jump");
@@ -911,7 +985,7 @@
   }
   function platformUnderPoint(point) {
     const footY = point.y + CONFIG.player.standHeight;
-    return level.platforms.find((platform) => footY <= platform.y + 4 && footY >= platform.y - 12 && point.x + CONFIG.player.width > platform.x && point.x < platform.x + platform.w);
+    return activePlatforms().find((platform) => footY <= platform.y + 4 && footY >= platform.y - 12 && point.x + CONFIG.player.width > platform.x && point.x < platform.x + platform.w);
   }
   function findSafeRespawnPoint() {
     const sorted = level.checkpoints.filter((checkpoint) => checkpoint.x <= game.safePoint.x).reverse();
@@ -1040,10 +1114,20 @@
 
   function updateBossTrigger(dt) {
     const p = game.player;
-    const arena = currentBossArena();
-    if (!game.bossActive && game.state === "playing" && p.x > arena.x + 40) {
+    const door = bossDoorRect();
+    if (!game.bossActive && game.state === "playing" && aabb(p, door)) {
       game.state = "bossIntro";
       game.bossIntroTimer = 2.2;
+      game.bossSceneActive = true;
+      game.enemies = [];
+      game.enemyBullets = [];
+      const arena = currentBossArena();
+      p.x = arena.x + 120;
+      p.y = 390 - p.h;
+      p.vx = 0;
+      p.vy = 0;
+      game.boss.x = arena.right - 280;
+      game.boss.y = CONFIG.groundY - game.boss.h;
       if (game.boss) {
         const affixText = game.boss.affixes && game.boss.affixes.length ? ` [${game.boss.affixes.join(" / ")}]` : "";
         game.bossIntroName = `${game.boss.bossName}${affixText}`;
@@ -1116,6 +1200,14 @@
   }
   function finishStage() {
     game.bossDefeated = true;
+    game.bossSceneActive = false;
+    if (game.boss && game.boss.isSpecial) {
+      game.growth.maxHp += 1;
+      game.player.maxHp = game.growth.maxHp;
+      game.player.hp = Math.min(game.player.maxHp, game.player.hp + 1);
+      game.growth.jumpMult *= 1.12;
+      showText("特别增益: 生命上限+1 跳跃+12%", game.player.x - 40, game.player.y - 56, "#86efac", 2);
+    }
     awardStageCompletionBonus();
     awardTimeBonus();
     game.state = "upgrade";
@@ -1176,7 +1268,22 @@
     if (input.wasPressed("debug")) CONFIG.debug.enabled = !CONFIG.debug.enabled;
     if (game.state === "menu") { if (input.wasPressed("start")) startRun(); return; }
     if (input.wasPressed("restart")) { resetGame(); startRun(); return; }
-    if (game.state === "gameOver" || game.state === "victory" || game.state === "upgrade") return;
+    if (game.state === "upgrade") {
+      if (input.wasPressed("left")) {
+        game.upgradeSelectedIndex = (game.upgradeSelectedIndex + game.upgradeChoices.length - 1) % game.upgradeChoices.length;
+        applyUpgradeSelection();
+      }
+      if (input.wasPressed("right")) {
+        game.upgradeSelectedIndex = (game.upgradeSelectedIndex + 1) % game.upgradeChoices.length;
+        applyUpgradeSelection();
+      }
+      if (input.pressed.has("Digit1")) { game.upgradeSelectedIndex = 0; applyUpgradeSelection(); }
+      if (input.pressed.has("Digit2") && game.upgradeChoices.length > 1) { game.upgradeSelectedIndex = 1; applyUpgradeSelection(); }
+      if (input.pressed.has("Digit3") && game.upgradeChoices.length > 2) { game.upgradeSelectedIndex = 2; applyUpgradeSelection(); }
+      if (input.pressed.has("Enter") || input.pressed.has("Space")) chooseSelectedUpgrade();
+      return;
+    }
+    if (game.state === "gameOver" || game.state === "victory") return;
     if (game.state === "bossIntro") {
       game.time += dt;
       game.warningTimer = Math.max(0, game.warningTimer - dt);
@@ -1203,7 +1310,7 @@
     updateBossTrigger(dt); updatePlayer(dt); updateEnemies(dt); updateBullets(dt); updateItems(dt); updateParticles(dt); updateCamera(dt);
   }
 
-  function areaAt(x) { if (x >= 3300) return "boss"; return level.theme; }
+  function areaAt(x) { if (game.bossSceneActive || x >= 3300) return "boss"; return level.theme; }
   function draw() {
     ctx.clearRect(0, 0, CONFIG.width, CONFIG.height);
     const shake = game.camera.shake, sx = shake > 0 ? (Math.random() - 0.5) * shake : 0, sy = shake > 0 ? (Math.random() - 0.5) * shake : 0;
@@ -1239,7 +1346,7 @@
     ctx.lineTo(CONFIG.width, CONFIG.height); ctx.closePath(); ctx.fill();
   }
   function drawLevel() {
-    for (const platform of level.platforms) {
+    for (const platform of activePlatforms()) {
       const colors = { base: ["#475569", "#94a3b8"], jungle: ["#166534", "#84cc16"], mech: ["#57534e", "#f97316"], boss: ["#7f1d1d", "#f43f5e"] }[platform.area || "base"];
       ctx.fillStyle = colors[0]; ctx.fillRect(platform.x, platform.y, platform.w, platform.h);
       ctx.fillStyle = colors[1]; ctx.fillRect(platform.x, platform.y, platform.w, 6);
@@ -1248,6 +1355,20 @@
     }
     ctx.fillStyle = "#ef4444";
     for (const hazard of level.hazards) for (let x = hazard.x; x < hazard.x + hazard.w; x += 14) { ctx.beginPath(); ctx.moveTo(x, hazard.y + hazard.h); ctx.lineTo(x + 7, hazard.y); ctx.lineTo(x + 14, hazard.y + hazard.h); ctx.closePath(); ctx.fill(); }
+    if (!game.bossActive && !game.bossSceneActive) {
+      const door = bossDoorRect();
+      ctx.fillStyle = "rgba(12, 20, 37, 0.95)";
+      ctx.fillRect(door.x, door.y, door.w, door.h);
+      ctx.strokeStyle = "#67e8f9";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(door.x, door.y, door.w, door.h);
+      ctx.fillStyle = "#fda4af";
+      ctx.fillRect(door.x + 22, door.y + 20, 20, 14);
+      ctx.fillStyle = "#0f172a";
+      ctx.fillRect(door.x + 25, door.y + 23, 4, 4);
+      ctx.fillRect(door.x + 35, door.y + 23, 4, 4);
+      ctx.fillRect(door.x + 29, door.y + 30, 6, 3);
+    }
     if (game.bossActive && !game.bossDefeated) {
       const arena = currentBossArena();
       drawGate(arena.x + 8); drawGate(arena.right - 24);
