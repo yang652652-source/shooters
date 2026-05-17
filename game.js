@@ -11,6 +11,9 @@
     score: document.getElementById("score"),
     bossWrap: document.getElementById("boss-wrap"),
     bossFill: document.getElementById("boss-fill"),
+    bossShieldLabel: document.getElementById("boss-shield-label"),
+    bossShieldTrack: document.getElementById("boss-shield-track"),
+    bossShieldFill: document.getElementById("boss-shield-fill"),
     debug: document.getElementById("debug"),
     overlay: document.getElementById("overlay"),
     overlayTitle: document.getElementById("overlay-title"),
@@ -1261,6 +1264,14 @@
     hud.score.textContent = `分数: ${game.score}  用时: ${formatTime(game.runTime)}`;
     if (game.bossActive && game.boss && !game.boss.dead) { hud.bossWrap.classList.remove("hidden"); hud.bossWrap.querySelector("span").textContent = game.boss.bossName; hud.bossFill.style.width = `${Math.max(0, game.boss.hp / game.boss.maxHp) * 100}%`; }
     else hud.bossWrap.classList.add("hidden");
+    if (game.bossActive && game.boss && !game.boss.dead && game.boss.shieldMax > 0) {
+      hud.bossShieldLabel.classList.remove("hidden");
+      hud.bossShieldTrack.classList.remove("hidden");
+      hud.bossShieldFill.style.width = `${Math.max(0, game.boss.shieldHp / game.boss.shieldMax) * 100}%`;
+    } else {
+      hud.bossShieldLabel.classList.add("hidden");
+      hud.bossShieldTrack.classList.add("hidden");
+    }
     hud.debug.textContent = CONFIG.debug.enabled ? `帧率 ${game.fps}\n位置X ${Math.round(game.player.x)}  位置Y ${Math.round(game.player.y)}\n速度X ${Math.round(game.player.vx)}  速度Y ${Math.round(game.player.vy)}` : "";
   }
 
