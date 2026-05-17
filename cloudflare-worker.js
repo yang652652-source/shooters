@@ -25,6 +25,14 @@ export default {
       return json({ ok: true, scores: scores.slice(0, 5) });
     }
 
+    if (url.pathname === "/scores/reset" && request.method === "POST") {
+      const resetToken = request.headers.get("x-reset-token") || url.searchParams.get("token") || "";
+      const expectedToken = (env.RESET_TOKEN || "").trim();
+      if (!expectedToken || resetToken !== expectedToken) return json({ error: "Unauthorized" }, 401);
+      await env.SCORES.put("leaderboard", JSON.stringify([]));
+      return json({ ok: true, scores: [] });
+    }
+
     return json({ error: "Not found" }, 404);
   }
 };
